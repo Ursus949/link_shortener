@@ -1,6 +1,7 @@
 mod routes;
 mod utils;
 use crate::routes::create_link;
+use crate::routes::get_link_statistics;
 use crate::routes::health;
 use crate::routes::redirect;
 use crate::routes::update_link;
@@ -40,7 +41,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let app: Router = Router::new()
         .route("/create", post(create_link))
-        // .route("/:id", get(redirect))
+        .route("/:id/statistics", get(get_link_statistics))
         .route("/:id", patch(update_link).get(redirect))
         .route("/metric", get(|| async move { metric_handle.render() }))
         .route("/health", get(health))
