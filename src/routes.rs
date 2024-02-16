@@ -8,8 +8,9 @@ use axum::{
 };
 use base64::engine::general_purpose;
 use base64::Engine;
+use metrics::counter;
 use rand::Rng;
-use sqlx::PgPool;
+use sqlx::{error::ErrorKind, Error, PgPool};
 use url::Url;
 
 const DEFAULT_CACHE_CONTROL_HEADER_VALUE: &str =
@@ -127,34 +128,48 @@ pub async fn create_link(
         .map_err(|_| (StatusCode::CONFLICT, "url malformed".into()))?
         .to_string();
 
-    let new_link_id = generate_id();
-
+    
     let insert_link_timeout = tokio::time::Duration::from_millis(300);
+    
+    for _ in 1..=3 {
+        let new_link_id = generate_id();
 
-    let new_link = tokio::time::timeout(
-        insert_link_timeout,
-        sqlx::query_as!(
-            Link,
-            r#"
-            with inserted_link as (
-                insert into links(id, target_url)
-                values ($1, $2)
-                returning id, target_url
+        let new_link = tokio::time::timeout(
+            insert_link_timeout,
+            sqlx::query_as!(
+                Link,
+                r#"
+                with inserted_link as (
+                    insert into links(id, target_url)
+                    values ($1, $2)
+                    returning id, target_url
+                )
+                select id, target_url from inserted_link
+                "#,
+                &new_link_id,
+                &url
             )
-            select id, target_url from inserted_link
-            "#,
-            &new_link_id,
-            &url
+            .fetch_one(&pool),
         )
-        .fetch_one(&pool),
-    )
-    .await
-    .map_err(internal_error)?
-    .map_err(internal_error)?;
+        .await
+        .map_err(internal_error)?;
 
-    tracing::debug!("Created new link with id {} targeting {}", new_link_id, url);
+        match new_link {
+            Ok(link) => {
+                tracing::debug!("Created new link with id {} targeting {}", new_link_id, url);
 
-    Ok(Json(new_link))
+                return Ok(Json(link))
+            }
+            Err(err) => match err {
+                Error::Database(db_err) if db_err.kind() == ErrorKind::UniqueViolation => {}
+                _ => return Err(internal_error(err))
+            }
+        }
+    }
+    tracing::error!("Could not persist new short link. Exhausted all retries of generating a unique id");
+    counter!("saving_link_impossible_no_unique_id");
+
+    Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".into()))
 }
 
 pub async fn update_link(
