@@ -1,12 +1,6 @@
 mod auth;
 mod routes;
 mod utils;
-use crate::auth::auth;
-use crate::routes::create_link;
-use crate::routes::get_link_statistics;
-use crate::routes::health;
-use crate::routes::redirect;
-use crate::routes::update_link;
 use axum::middleware;
 use axum::routing::get;
 use axum::routing::patch;
@@ -43,16 +37,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
 
     let app: Router = Router::new()
-        .route("/create", post(create_link))
-        .route("/:id/statistics", get(get_link_statistics))
-        .route_layer(middleware::from_fn_with_state(db.clone(), auth))
+        .route("/create", post(routes::create_link))
+        .route("/:id/statistics", get(routes::get_link_statistics))
+        .route_layer(middleware::from_fn_with_state(db.clone(), auth::auth))
         .route(
             "/:id",
-            patch(update_link)
-                .route_layer(middleware::from_fn_with_state(db.clone(), auth))
-                .get(redirect))
+            patch(routes::update_link)
+                .route_layer(middleware::from_fn_with_state(db.clone(), auth::auth))
+                .get(routes::redirect))
         .route("/metrics", get(|| async move { metric_handle.render() }))
-        .route("/health", get(health))
+        .route("/health", get(routes::health))
         .layer(TraceLayer::new_for_http())
         .layer(prometheus_layer)
         .with_state(db);
